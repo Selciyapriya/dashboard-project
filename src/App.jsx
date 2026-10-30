@@ -1,5 +1,5 @@
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Sidebar from "./components/Sidebar"
 import Header from "./components/Header"
 import StatCard from "./components/StatCard"
@@ -44,13 +44,46 @@ const emptyForm = {
 
 export default function App() {
   const [products, setProducts] = useState(initialProducts)
+  const [loading, setLoading] =useState(true)
+  const [apiError, setApiError] = useState("")
+  useEffect(() => {
+  async function fetchProducts() {
+    try {
+      const response = await fetch(
+        "https://dummyjson.com/products"
+      )
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch products")
+      }
+
+      const data = await response.json()
+
+      const apiProducts = data.products.map((product) => ({
+        id: product.id,
+        name: product.title,
+        category: product.category,
+        price: product.price,
+        stock: product.stock,
+      }))
+
+      setProducts(apiProducts)
+    } catch (error) {
+      setApiError(error.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  fetchProducts()
+}, [])
   const [search, setSearch] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("All")
   const [sortBy, setSortBy] = useState("name-asc")
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingId, setEditingId] = useState(null)
   const [form, setForm] = useState(emptyForm)
-
+  const [errors, setErrors] = useState({})
   const categories = [...new Set(products.map((p) => p.category))].sort()
 
   const filteredProducts = products
@@ -90,41 +123,71 @@ export default function App() {
     })
     setIsModalOpen(true)
   }
+  function validateForm() {
+  const newErrors = {}
+
+  if (form.name.trim().length < 2) {
+    newErrors.name = "Product name must have at least 2 characters"
+  }
+
+  if (!form.category.trim()) {
+    newErrors.category = "Category is required"
+  }
+
+  if (form.price === "" || !Number.isFinite(Number(form.price)) || Number(form.price) <= 0) {
+    newErrors.price = "Enter a valid price greater than 0"
+  }
+
+  if (
+    form.stock === "" ||
+    !Number.isInteger(Number(form.stock)) ||
+    Number(form.stock) < 0
+  ) {
+    newErrors.stock = "Enter a valid whole number (0 or more)"
+  }
+
+  setErrors(newErrors)
+
+  return Object.keys(newErrors).length === 0
+}
 
   function handleSubmit(event) {
-    event.preventDefault()
+  event.preventDefault()
 
-    const productData = {
-      name: form.name.trim(),
-      category: form.category.trim(),
-      price: Number(form.price),
-      stock: Number(form.stock),
-    }
-
-    if (!productData.name || !productData.category) return
-
-    if (editingId !== null) {
-      setProducts((current) =>
-        current.map((product) =>
-          product.id === editingId
-            ? { ...product, ...productData }
-            : product
-        )
-      )
-    } else {
-      const newId =
-        Math.max(0, ...products.map((product) => product.id)) + 1
-
-      setProducts((current) => [
-        ...current,
-        { id: newId, ...productData },
-      ])
-    }
-
-    setIsModalOpen(false)
-    setForm(emptyForm)
-    setEditingId(null)
+  if (!validateForm()) {
+    return
   }
+
+  const productData = {
+    name: form.name.trim(),
+    category: form.category.trim(),
+    price: Number(form.price),
+    stock: Number(form.stock),
+  }
+
+  if (editingId !== null) {
+    setProducts((current) =>
+      current.map((product) =>
+        product.id === editingId
+          ? { ...product, ...productData }
+          : product
+      )
+    )
+  } else {
+    const newId =
+      Math.max(0, ...products.map((product) => product.id)) + 1
+
+    setProducts((current) => [
+      ...current,
+      { id: newId, ...productData },
+    ])
+  }
+
+  setIsModalOpen(false)
+  setForm(emptyForm)
+  setErrors({})
+  setEditingId(null)
+}
 
   function deleteProduct(id) {
     const confirmed = window.confirm(
@@ -196,6 +259,11 @@ export default function App() {
                   onChange={(event) => setSearch(event.target.value)}
                   className="w-full rounded-xl border border-violet-100 bg-white py-3 pl-10 pr-4 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                 />
+                {errors.name && (
+                  <p className="mt-1 text-sm text-rose-600">
+                    {errors.name}
+                  </p>
+                )}
               </div>
 
               <select
@@ -224,6 +292,17 @@ export default function App() {
             </div>
 
             {/* Products Table */}
+            {loading && (
+              <p className="py-6 text-center text-violet-600 font-semibold">
+               Loading products...
+              </p>
+            )}
+
+            {apiError && (
+              <p className="py-6 text-center text-rose-600">
+                {apiError}
+              </p>
+            )}
             <div className="overflow-x-auto rounded-2xl border border-violet-100 bg-white shadow-sm">
               <table className="w-full min-w-[850px] text-left text-sm">
                 <thead className="bg-violet-100 text-slate-700">
@@ -370,6 +449,7 @@ export default function App() {
                   placeholder="e.g. Laptop"
                   className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                 />
+                
               </div>
 
               <div>
@@ -386,6 +466,11 @@ export default function App() {
                   placeholder="e.g. Electronics"
                   className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                 />
+                {errors.category && (
+                  <p className="mt-1 text-sm text-rose-600">
+                    {errors.category}
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -405,6 +490,11 @@ export default function App() {
                     placeholder="999"
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                   />
+                  {errors.price && (
+                  <p className="mt-1 text-sm text-rose-600">
+                    {errors.price}
+                  </p>
+                )}
                 </div>
 
                 <div>
@@ -423,6 +513,11 @@ export default function App() {
                     placeholder="10"
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                   />
+                  {errors.stocky && (
+                  <p className="mt-1 text-sm text-rose-600">
+                    {errors.stock}
+                  </p>
+                )}
                 </div>
               </div>
 
