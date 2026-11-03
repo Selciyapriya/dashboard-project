@@ -46,6 +46,7 @@ export default function App() {
   const [products, setProducts] = useState(initialProducts)
   const [loading, setLoading] =useState(true)
   const [apiError, setApiError] = useState("")
+  const [saving, setSaving] = useState(false)
   useEffect(() => {
   async function fetchProducts() {
     try {
@@ -149,59 +150,126 @@ export default function App() {
   setErrors(newErrors)
 
   return Object.keys(newErrors).length === 0
-}
-
-  function handleSubmit(event) {
-  event.preventDefault()
+  }
+  
+async function handleSubmit(event) {
+  event.preventDefault();
 
   if (!validateForm()) {
-    return
+    return;
   }
 
   const productData = {
-    name: form.name.trim(),
+    title: form.name.trim(),
     category: form.category.trim(),
     price: Number(form.price),
     stock: Number(form.stock),
+  };
+
+  try {
+    setSaving(true);
+    setApiError("");
+
+    let response;
+
+    if (editingId !== null) {
+      // UPDATE API (PUT)
+      response = await fetch(
+        `https://dummyjson.com/products/${editingId}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(productData),
+        }
+      );
+    } else {
+      // CREATE API (POST)
+      response = await fetch(
+        "https://dummyjson.com/products/add",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(productData),
+        }
+      );
+    }
+
+    if (!response.ok) {
+      throw new Error("Failed to save product");
+    }
+
+    const savedProduct = await response.json();
+
+    const formattedProduct = {
+      id: savedProduct.id,
+      name: savedProduct.title || productData.title,
+      category: productData.category,
+      price: productData.price,
+      stock: productData.stock,
+    };
+
+    if (editingId !== null) {
+      setProducts((current) =>
+        current.map((product) =>
+          product.id === editingId
+            ?  { ...product, ...formattedProduct }
+            : product
+        )
+      );
+    } else {
+      setProducts((current) => [
+        formattedProduct,
+        ...current,
+      ]);
+    }
+
+    setIsModalOpen(false);
+    setForm(emptyForm);
+    setErrors({});
+    setEditingId(null);
+
+  } catch (error) {
+    setApiError(error.message);
+  } finally {
+    setSaving(false);
   }
-
-  if (editingId !== null) {
-    setProducts((current) =>
-      current.map((product) =>
-        product.id === editingId
-          ? { ...product, ...productData }
-          : product
-      )
-    )
-  } else {
-    const newId =
-      Math.max(0, ...products.map((product) => product.id)) + 1
-
-    setProducts((current) => [
-      ...current,
-      { id: newId, ...productData },
-    ])
-  }
-
-  setIsModalOpen(false)
-  setForm(emptyForm)
-  setErrors({})
-  setEditingId(null)
 }
 
-  function deleteProduct(id) {
-    const confirmed = window.confirm(
-      "Are you sure you want to delete this product?"
-    )
+async function deleteProduct(id) {
+  const confirmed = window.confirm(
+    "Are you sure you want to delete this product?"
+  );
 
-    if (confirmed) {
-      setProducts((current) =>
-        current.filter((product) => product.id !== id)
-      )
+  if (!confirmed) return;
+
+  setProducts((current) =>
+    current.filter((product) => String(product.id) !== String(id))
+);
+
+  try {
+    setApiError("");
+
+    const response = await fetch(
+      `https://dummyjson.com/products/${id}`,
+      {
+        method: "DELETE",
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("Failed to delete product from API");
     }
-  }
 
-  return (
+  } catch (error) {
+    setApiError(error.message);
+  }
+}
+
+ return (
     <div className="min-h-screen bg-gradient-to-br from-violet-50 via-sky-50 to-rose-50 md:flex">
       <div className="hidden md:block">
         <Sidebar />
@@ -374,14 +442,14 @@ export default function App() {
                     </tr>
                   ))}
 
-                  {filteredProducts.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan="7"
-                        className="px-5 py-10 text-center text-slate-500"
-                      >
-                        No products found. Try another search or filter.
-                      </td>
+                  {!loading && !apiError && filteredProducts.length === 0 && (
+                   <tr>
+                     <td
+                       colSpan="7"
+                       className="px-5 py-10 text-center text-slate-500"
+                     >
+                        No products available. Try another search or filter.
+                     </td>
                     </tr>
                   )}
                 </tbody>
@@ -513,7 +581,7 @@ export default function App() {
                     placeholder="10"
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                   />
-                  {errors.stocky && (
+                  {errors.stock && (
                   <p className="mt-1 text-sm text-rose-600">
                     {errors.stock}
                   </p>
@@ -532,9 +600,14 @@ export default function App() {
 
                 <button
                   type="submit"
-                  className="flex-1 rounded-xl bg-violet-600 px-4 py-3 font-semibold text-white shadow-md hover:bg-violet-700"
+                  disabled={saving}
+                  className="flex-1 rounded-xl bg-violet-600 px-4 py-3 font-semibold text-white shadow-md hover:bg-violet-700 disabled:opacity-50"
                 >
-                  {editingId !== null ? "Save Changes" : "Add Product"}
+                  {saving
+                  ? "Saving..."
+                : editingId !== null
+                 ? "Save Changes"
+                : "Add Product"}
                 </button>
               </div>
             </form>
