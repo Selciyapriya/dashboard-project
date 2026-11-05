@@ -3,6 +3,9 @@ import { useState, useEffect } from "react"
 import Sidebar from "./components/Sidebar"
 import Header from "./components/Header"
 import StatCard from "./components/StatCard"
+import DataTable from "./components/DataTable"
+import Modal from "./components/Modal"
+import Form from "./components/Form"
 
 const stats = [
   {
@@ -46,6 +49,7 @@ export default function App() {
   const [products, setProducts] = useState(initialProducts)
   const [loading, setLoading] =useState(true)
   const [apiError, setApiError] = useState("")
+  const [actionError, setActionError] = useState("")
   const [saving, setSaving] = useState(false)
   useEffect(() => {
   async function fetchProducts() {
@@ -86,6 +90,58 @@ export default function App() {
   const [form, setForm] = useState(emptyForm)
   const [errors, setErrors] = useState({})
   const categories = [...new Set(products.map((p) => p.category))].sort()
+  const productColumns = [
+  {
+    key: "id",
+    label: "ID",
+  },
+  {
+    key: "name",
+    label: "Product Name",
+    render: (product) => (
+      <span className="font-semibold text-slate-800">
+        📦 {product.name}
+      </span>
+    ),
+  },
+  {
+    key: "category",
+    label: "Category",
+    render: (product) => (
+      <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-700">
+        {product.category}
+      </span>
+    ),
+  },
+  {
+    key: "price",
+    label: "Price",
+    render: (product) => (
+      <span className="font-medium">
+        ₹{product.price.toLocaleString("en-IN")}
+      </span>
+    ),
+  },
+  {
+    key: "stock",
+    label: "Stock",
+  },
+  {
+    key: "status",
+    label: "Status",
+    render: (product) => (
+      <span
+        className={`rounded-full px-3 py-1 text-xs font-semibold ${
+          product.stock < 10
+            ? "bg-orange-100 text-orange-700"
+            : "bg-emerald-100 text-emerald-700"
+        }`}
+      >
+        {product.stock < 10 ? "Low Stock" : "In Stock"}
+      </span>
+    ),
+  },
+]
 
   const filteredProducts = products
     .filter((product) =>
@@ -166,74 +222,102 @@ async function handleSubmit(event) {
     stock: Number(form.stock),
   };
 
+  const isLocalProduct = products.some(
+    (product) => product.id === editingId && product.isLocal
+  );
+
   try {
     setSaving(true);
-    setApiError("");
-
-    let response;
+    setActionError("");
 
     if (editingId !== null) {
-      // UPDATE API (PUT)
-      response = await fetch(
-        `https://dummyjson.com/products/${editingId}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(productData),
-        }
-      );
-    } else {
-      // CREATE API (POST)
-      response = await fetch(
-        "https://dummyjson.com/products/add",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(productData),
-        }
-      );
-    }
-
-    if (!response.ok) {
-      throw new Error("Failed to save product");
-    }
-
-    const savedProduct = await response.json();
-
-    const formattedProduct = {
-      id: savedProduct.id,
-      name: savedProduct.title || productData.title,
-      category: productData.category,
-      price: productData.price,
-      stock: productData.stock,
-    };
-
-    if (editingId !== null) {
+      // Update the product in the local React state
       setProducts((current) =>
         current.map((product) =>
           product.id === editingId
-            ?  { ...product, ...formattedProduct }
+            ? {
+                ...product,
+                name: productData.title,
+                category: productData.category,
+                price: productData.price,
+                stock: productData.stock,
+              }
             : product
         )
       );
+
+      // Only call PUT for products originally loaded from the API
+      if (!isLocalProduct) {
+        const response = await fetch(
+          `https://dummyjson.com/products/${editingId}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(productData),
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error("Product updated locally, but API update failed.");
+        }
+
+        await response.json();
+      }
     } else {
-      setProducts((current) => [
-        formattedProduct,
-        ...current,
-      ]);
+      // Add the product locally first
+      const temporaryId = Date.now();
+
+      const newProduct = {
+        id: temporaryId,
+        name: productData.title,
+        category: productData.category,
+        price: productData.price,
+        stock: productData.stock,
+        isLocal: true,
+      };
+
+      setProducts((current) => [newProduct, ...current]);
+
+      try {
+        const response = await fetch(
+          "https://dummyjson.com/products/add",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(productData),
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error("API add request failed.");
+        }
+
+        const savedProduct = await response.json();
+
+        setProducts((current) =>
+          current.map((product) =>
+            product.id === temporaryId
+              ? { ...product, id: savedProduct.id }
+              : product
+          )
+        );
+      } catch {
+        setActionError(
+          "Product added locally, but the API request failed."
+        );
+      }
     }
 
     setIsModalOpen(false);
     setForm(emptyForm);
     setErrors({});
     setEditingId(null);
-
   } catch (error) {
-    setApiError(error.message);
+    setActionError(error.message);
   } finally {
     setSaving(false);
   }
@@ -246,13 +330,23 @@ async function deleteProduct(id) {
 
   if (!confirmed) return;
 
+  const productToDelete = products.find(
+    (product) => product.id === id
+  );
+
+  // Remove the product from the dashboard
   setProducts((current) =>
-    current.filter((product) => String(product.id) !== String(id))
-);
+    current.filter((product) => product.id !== id)
+  );
+
+  setActionError("");
+
+  // Skip API deletion for locally created products
+  if (productToDelete?.isLocal) {
+    return;
+  }
 
   try {
-    setApiError("");
-
     const response = await fetch(
       `https://dummyjson.com/products/${id}`,
       {
@@ -261,11 +355,15 @@ async function deleteProduct(id) {
     );
 
     if (!response.ok) {
-      throw new Error("Failed to delete product from API");
+      throw new Error("API deletion failed.");
     }
 
+    await response.json();
+
   } catch (error) {
-    setApiError(error.message);
+    setActionError(
+      "Product was removed from the dashboard, but API deletion failed."
+    );
   }
 }
 
@@ -327,11 +425,6 @@ async function deleteProduct(id) {
                   onChange={(event) => setSearch(event.target.value)}
                   className="w-full rounded-xl border border-violet-100 bg-white py-3 pl-10 pr-4 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                 />
-                {errors.name && (
-                  <p className="mt-1 text-sm text-rose-600">
-                    {errors.name}
-                  </p>
-                )}
               </div>
 
               <select
@@ -358,103 +451,21 @@ async function deleteProduct(id) {
                 <option value="price-desc">Price: High to Low</option>
               </select>
             </div>
-
-            {/* Products Table */}
-            {loading && (
-              <p className="py-6 text-center text-violet-600 font-semibold">
-               Loading products...
-              </p>
+            {actionError && (
+              <p className="mb-4 rounded-lg bg-rose-100 p-3 text-sm text-rose-700">
+                {actionError}
+                </p>
             )}
+            {/* Reusable DataTable Component */}
 
-            {apiError && (
-              <p className="py-6 text-center text-rose-600">
-                {apiError}
-              </p>
-            )}
-            <div className="overflow-x-auto rounded-2xl border border-violet-100 bg-white shadow-sm">
-              <table className="w-full min-w-[850px] text-left text-sm">
-                <thead className="bg-violet-100 text-slate-700">
-                  <tr>
-                    <th className="px-5 py-4">ID</th>
-                    <th className="px-5 py-4">Product Name</th>
-                    <th className="px-5 py-4">Category</th>
-                    <th className="px-5 py-4">Price</th>
-                    <th className="px-5 py-4">Stock</th>
-                    <th className="px-5 py-4">Status</th>
-                    <th className="px-5 py-4">Actions</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {filteredProducts.map((product) => (
-                    <tr
-                      key={product.id}
-                      className="border-t border-slate-100 transition hover:bg-violet-50"
-                    >
-                      <td className="px-5 py-4 text-slate-500">
-                        {product.id}
-                      </td>
-
-                      <td className="px-5 py-4 font-semibold text-slate-800">
-                        📦 {product.name}
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-700">
-                          {product.category}
-                        </span>
-                      </td>
-
-                      <td className="px-5 py-4 font-medium">
-                        ₹{product.price.toLocaleString("en-IN")}
-                      </td>
-
-                      <td className="px-5 py-4">{product.stock}</td>
-
-                      <td className="px-5 py-4">
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                            product.stock < 10
-                              ? "bg-orange-100 text-orange-700"
-                              : "bg-emerald-100 text-emerald-700"
-                          }`}
-                        >
-                          {product.stock < 10 ? "Low Stock" : "In Stock"}
-                        </span>
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => openEditModal(product)}
-                            className="rounded-lg bg-sky-100 px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-200"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => deleteProduct(product.id)}
-                            className="rounded-lg bg-rose-100 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-200"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-
-                  {!loading && !apiError && filteredProducts.length === 0 && (
-                   <tr>
-                     <td
-                       colSpan="7"
-                       className="px-5 py-10 text-center text-slate-500"
-                     >
-                        No products available. Try another search or filter.
-                     </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+            columns={productColumns}
+            data={filteredProducts}
+            loading={loading}
+            error={apiError}
+            onEdit={openEditModal}
+            onDelete={deleteProduct}
+            />
 
             <p className="mt-3 text-sm text-slate-500">
               Showing {filteredProducts.length} of {products.length} products
@@ -463,157 +474,121 @@ async function deleteProduct(id) {
         </section>
       </main>
 
-      {/* Add / Edit Product Modal */}
-      {isModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/50 p-4"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              setIsModalOpen(false)
-            }
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="product-modal-title"
-            className="my-auto w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
-          >
-            <div className="mb-6 flex items-center justify-between">
-              <div>
-                <h2
-                  id="product-modal-title"
-                  className="text-xl font-bold text-slate-800"
-                >
-                  {editingId !== null ? "Edit Product" : "Add Product"}
-                </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  Enter the product details below.
-                </p>
-              </div>
+     {/* Reusable Modal and Form Components */}
+<Modal
+  isOpen={isModalOpen}
+  onClose={() => setIsModalOpen(false)}
+  title={editingId !== null ? "Edit Product" : "Add Product"}
+  description="Enter the product details below."
+>
+  <Form
+    onSubmit={handleSubmit}
+    onCancel={() => setIsModalOpen(false)}
+    saving={saving}
+    submitText={editingId !== null ? "Save Changes" : "Add Product"}
+  >
+    {/* Product Name */}
+    <div>
+      <label className="mb-1 block text-sm font-medium text-slate-700">
+        Product Name
+      </label>
 
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                aria-label="Close modal"
-                className="rounded-lg px-3 py-2 text-xl text-slate-500 hover:bg-slate-100"
-              >
-                ×
-              </button>
-            </div>
+      <input
+        required
+        type="text"
+        value={form.name}
+        onChange={(event) =>
+          setForm({ ...form, name: event.target.value })
+        }
+        placeholder="e.g. Laptop"
+        className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+      />
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Product Name
-                </label>
-                <input
-                  required
-                  type="text"
-                  value={form.name}
-                  onChange={(event) =>
-                    setForm({ ...form, name: event.target.value })
-                  }
-                  placeholder="e.g. Laptop"
-                  className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                />
-                
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Category
-                </label>
-                <input
-                  required
-                  type="text"
-                  value={form.category}
-                  onChange={(event) =>
-                    setForm({ ...form, category: event.target.value })
-                  }
-                  placeholder="e.g. Electronics"
-                  className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                />
-                {errors.category && (
-                  <p className="mt-1 text-sm text-rose-600">
-                    {errors.category}
-                  </p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    Price (₹)
-                  </label>
-                  <input
-                    required
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.price}
-                    onChange={(event) =>
-                      setForm({ ...form, price: event.target.value })
-                    }
-                    placeholder="999"
-                    className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                  />
-                  {errors.price && (
-                  <p className="mt-1 text-sm text-rose-600">
-                    {errors.price}
-                  </p>
-                )}
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    Stock
-                  </label>
-                  <input
-                    required
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={form.stock}
-                    onChange={(event) =>
-                      setForm({ ...form, stock: event.target.value })
-                    }
-                    placeholder="10"
-                    className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                  />
-                  {errors.stock && (
-                  <p className="mt-1 text-sm text-rose-600">
-                    {errors.stock}
-                  </p>
-                )}
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="flex-1 rounded-xl border border-slate-200 px-4 py-3 font-semibold text-slate-600 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex-1 rounded-xl bg-violet-600 px-4 py-3 font-semibold text-white shadow-md hover:bg-violet-700 disabled:opacity-50"
-                >
-                  {saving
-                  ? "Saving..."
-                : editingId !== null
-                 ? "Save Changes"
-                : "Add Product"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {errors.name && (
+        <p className="mt-1 text-sm text-rose-600">
+          {errors.name}
+        </p>
       )}
+    </div>
+
+    {/* Category */}
+    <div>
+      <label className="mb-1 block text-sm font-medium text-slate-700">
+        Category
+      </label>
+
+      <input
+        required
+        type="text"
+        value={form.category}
+        onChange={(event) =>
+          setForm({ ...form, category: event.target.value })
+        }
+        placeholder="e.g. Electronics"
+        className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+      />
+
+      {errors.category && (
+        <p className="mt-1 text-sm text-rose-600">
+          {errors.category}
+        </p>
+      )}
+    </div>
+
+    {/* Price and Stock */}
+    <div className="grid grid-cols-2 gap-3">
+      <div>
+        <label className="mb-1 block text-sm font-medium text-slate-700">
+          Price (₹)
+        </label>
+
+        <input
+          required
+          type="number"
+          min="0"
+          step="0.01"
+          value={form.price}
+          onChange={(event) =>
+            setForm({ ...form, price: event.target.value })
+          }
+          placeholder="999"
+          className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+        />
+
+        {errors.price && (
+          <p className="mt-1 text-sm text-rose-600">
+            {errors.price}
+          </p>
+        )}
+      </div>
+
+      <div>
+        <label className="mb-1 block text-sm font-medium text-slate-700">
+          Stock
+        </label>
+
+        <input
+          required
+          type="number"
+          min="0"
+          step="1"
+          value={form.stock}
+          onChange={(event) =>
+            setForm({ ...form, stock: event.target.value })
+          }
+          placeholder="10"
+          className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+        />
+
+        {errors.stock && (
+          <p className="mt-1 text-sm text-rose-600">
+            {errors.stock}
+          </p>
+        )}
+      </div>
+    </div>
+  </Form>
+</Modal>
     </div>
   )
 }
