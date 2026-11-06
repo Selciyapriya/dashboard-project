@@ -6,6 +6,7 @@ import StatCard from "./components/StatCard"
 import DataTable from "./components/DataTable"
 import Modal from "./components/Modal"
 import Form from "./components/Form"
+import Login from "./components/Login"
 
 const stats = [
   {
@@ -47,6 +48,9 @@ const emptyForm = {
 
 export default function App() {
   const [products, setProducts] = useState(initialProducts)
+  const [token, setToken] = useState(
+    () => localStorage.getItem("accessToken") || ""
+  )
   const [loading, setLoading] =useState(true)
   const [apiError, setApiError] = useState("")
   const [actionError, setActionError] = useState("")
@@ -55,12 +59,18 @@ export default function App() {
   async function fetchProducts() {
     try {
       const response = await fetch(
-        "https://dummyjson.com/products"
+        "https://dummyjson.com/products",
+        {
+          headers: {
+            Authorization: 'Bearer ${token}',
+          },
+        }
       )
 
       if (!response.ok) {
         throw new Error("Failed to fetch products")
       }
+      if (!token) return
 
       const data = await response.json()
 
@@ -81,7 +91,7 @@ export default function App() {
   }
 
   fetchProducts()
-}, [])
+}, [token])
   const [search, setSearch] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("All")
   const [sortBy, setSortBy] = useState("name-asc")
@@ -89,6 +99,14 @@ export default function App() {
   const [editingId, setEditingId] = useState(null)
   const [form, setForm] = useState(emptyForm)
   const [errors, setErrors] = useState({})
+  function handleLoginSuccess(newToken) {
+    localStorage.setItem("accessToken", newToken)
+    setToken(newToken)
+  }
+  function handleLogout() {
+    localStorage.removeItem("accessToken")
+    setToken("")
+  }
   const categories = [...new Set(products.map((p) => p.category))].sort()
   const productColumns = [
   {
@@ -366,15 +384,25 @@ async function deleteProduct(id) {
     );
   }
 }
+ if (!token) {
+  return <Login onLoginSuccess={handleLoginSuccess} />
+ }
 
  return (
     <div className="min-h-screen bg-gradient-to-br from-violet-50 via-sky-50 to-rose-50 md:flex">
       <div className="hidden md:block">
         <Sidebar />
       </div>
+        <main className="min-w-0 flex-1">
+          <div className="flex justify-end p-4">
+            <button
+              onClick={handleLogout}
+              className="rounded-xl bg-rose-500 px-5 py-2 font-semibold text-white hover:bg-rose-600">
+                Logout
+              </button>
+          </div>
 
-      <main className="min-w-0 flex-1">
-        <Header />
+          <Header />
 
         <section className="p-6">
           <h2 className="mb-6 text-xl font-semibold text-slate-800">
